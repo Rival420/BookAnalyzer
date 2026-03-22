@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Book Analyzer — Reference Guide Generator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --gold: #f0d080;
+    --gold-dim: #c9902a;
+    --gold-dark: #8b6914;
+    --gold-glow: rgba(240, 208, 128, 0.08);
+    --bg: #0e0c0a;
+    --bg2: #110f0c;
+    --bg3: #1a1208;
+    --border: #3a2e1e;
+    --border2: #5a3e1a;
+    --text: #e8e0d4;
+    --text-dim: #c4b48c;
+    --text-muted: #a09070;
+    --text-faint: #7a6040;
+    --text-ghost: #5a4a30;
+    --danger: #c07060;
+  }
+
+  body {
+    font-family: "DM Sans", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow-x: hidden;
+  }
+
+  /* --- Ambient background --- */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 600px 400px at 20% 10%, rgba(139, 105, 20, 0.06), transparent),
+      radial-gradient(ellipse 500px 500px at 80% 80%, rgba(139, 105, 20, 0.04), transparent);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* --- Grain overlay --- */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    opacity: 0.03;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .page {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 640px;
+    padding: 0 24px;
+  }
+
+  /* --- Header --- */
+  .header {
+    text-align: center;
+    padding: 80px 0 48px;
+  }
+
+  .header-eyebrow {
+    font-size: 10px;
+    letter-spacing: 5px;
+    color: var(--gold-dark);
+    text-transform: uppercase;
+    margin-bottom: 16px;
+    font-weight: 500;
+  }
+
+  .header h1 {
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-size: clamp(32px, 6vw, 48px);
+    font-weight: 300;
+    color: #f5e6c8;
+    line-height: 1.1;
+    margin-bottom: 12px;
+  }
+
+  .header p {
+    font-size: 14px;
+    color: var(--text-muted);
+    line-height: 1.7;
+    max-width: 400px;
+    margin: 0 auto;
+  }
+
+  /* --- Divider --- */
+  .divider {
+    width: 48px;
+    height: 1px;
+    background: var(--gold-dark);
+    margin: 0 auto 40px;
+  }
+
+  /* --- Upload Zone --- */
+  .upload-zone {
+    position: relative;
+    border: 1.5px dashed var(--border2);
+    border-radius: 8px;
+    padding: 56px 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    background: rgba(255, 255, 255, 0.01);
+    overflow: hidden;
+  }
+
+  .upload-zone::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 50% 50%, var(--gold-glow), transparent 70%);
+    opacity: 0;
+    transition: opacity 0.4s ease;
+  }
+
+  .upload-zone:hover::before,
+  .upload-zone.dragover::before {
+    opacity: 1;
+  }
+
+  .upload-zone:hover,
+  .upload-zone.dragover {
+    border-color: var(--gold-dark);
+    background: rgba(139, 105, 20, 0.04);
+  }
+
+  .upload-zone.dragover {
+    border-color: var(--gold-dim);
+    transform: scale(1.01);
+  }
+
+  .upload-icon {
+    position: relative;
+    width: 48px;
+    height: 48px;
+    margin: 0 auto 20px;
+  }
+
+  .upload-icon svg {
+    width: 48px;
+    height: 48px;
+    stroke: var(--gold-dark);
+    stroke-width: 1;
+    fill: none;
+    transition: stroke 0.3s;
+  }
+
+  .upload-zone:hover .upload-icon svg {
+    stroke: var(--gold-dim);
+  }
+
+  .upload-label {
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-size: 20px;
+    color: var(--gold);
+    margin-bottom: 8px;
+    font-weight: 400;
+    position: relative;
+  }
+
+  .upload-hint {
+    font-size: 12px;
+    color: var(--text-faint);
+    position: relative;
+  }
+
+  .upload-hint span {
+    color: var(--gold-dim);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  input[type="file"] { display: none; }
+
+  /* --- n8n URL config --- */
+  .config-bar {
+    margin-top: 20px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .config-bar label {
+    font-size: 11px;
+    letter-spacing: 1px;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .config-bar input {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-family: "DM Sans", sans-serif;
+    color: var(--text-dim);
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .config-bar input:focus {
+    border-color: var(--gold-dark);
+  }
+
+  .config-bar input::placeholder {
+    color: var(--text-ghost);
+  }
+
+  /* --- File info --- */
+  .file-info {
+    display: none;
+    align-items: center;
+    gap: 12px;
+    margin-top: 20px;
+    padding: 14px 16px;
+    background: rgba(139, 105, 20, 0.06);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .file-info.visible { display: flex; }
+
+  .file-info-icon {
+    width: 36px;
+    height: 36px;
+    background: var(--bg3);
+    border: 1px solid var(--gold-dark);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--gold-dim);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
+  }
+
+  .file-info-meta {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .file-info-name {
+    font-size: 13px;
+    color: var(--gold);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .file-info-size {
+    font-size: 11px;
+    color: var(--text-faint);
+    margin-top: 2px;
+  }
+
+  .file-info-remove {
+    background: none;
+    border: none;
+    color: var(--text-ghost);
+    cursor: pointer;
+    font-size: 18px;
+    padding: 4px;
+    line-height: 1;
+    transition: color 0.2s;
+  }
+
+  .file-info-remove:hover { color: var(--danger); }
+
+  /* --- Analyze Button --- */
+  .analyze-btn {
+    display: none;
+    width: 100%;
+    margin-top: 20px;
+    padding: 16px;
+    background: linear-gradient(135deg, #2d1f0e 0%, #3a2810 100%);
+    border: 1px solid var(--gold-dark);
+    border-radius: 6px;
+    color: var(--gold);
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-size: 18px;
+    font-weight: 400;
+    cursor: pointer;
+    letter-spacing: 1px;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .analyze-btn::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, transparent, rgba(240, 208, 128, 0.08));
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+
+  .analyze-btn:hover::before { opacity: 1; }
+  .analyze-btn:hover { border-color: var(--gold-dim); }
+  .analyze-btn.visible { display: block; }
+  .analyze-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* --- Progress --- */
+  .progress-area {
+    display: none;
+    margin-top: 32px;
+  }
+
+  .progress-area.visible { display: block; }
+
+  .progress-title {
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-size: 18px;
+    color: var(--gold);
+    margin-bottom: 20px;
+    text-align: center;
+  }
+
+  .progress-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    position: relative;
+    padding-left: 20px;
+  }
+
+  .progress-steps::before {
+    content: "";
+    position: absolute;
+    left: 5px;
+    top: 8px;
+    bottom: 8px;
+    width: 1px;
+    background: var(--border);
+  }
+
+  .step {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 0;
+    position: relative;
+  }
+
+  .step-dot {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    border: 1.5px solid var(--border);
+    background: var(--bg);
+    position: absolute;
+    left: -20px;
+    flex-shrink: 0;
+    transition: all 0.4s ease;
+  }
+
+  .step.active .step-dot {
+    border-color: var(--gold-dim);
+    background: var(--gold-dark);
+    box-shadow: 0 0 8px rgba(240, 208, 128, 0.3);
+  }
+
+  .step.done .step-dot {
+    border-color: var(--gold-dim);
+    background: var(--gold-dim);
+  }
+
+  .step-label {
+    font-size: 13px;
+    color: var(--text-ghost);
+    transition: color 0.3s;
+  }
+
+  .step.active .step-label { color: var(--gold); }
+  .step.done .step-label { color: var(--text-muted); }
+
+  .step-spinner {
+    display: none;
+    width: 14px;
+    height: 14px;
+    border: 1.5px solid var(--border);
+    border-top-color: var(--gold-dim);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  .step.active .step-spinner { display: block; }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* --- Error --- */
+  .error-box {
+    display: none;
+    margin-top: 20px;
+    padding: 16px;
+    background: rgba(192, 112, 96, 0.08);
+    border: 1px solid rgba(192, 112, 96, 0.3);
+    border-radius: 6px;
+    color: var(--danger);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .error-box.visible { display: block; }
+
+  /* --- Result --- */
+  .result-area {
+    display: none;
+    margin-top: 32px;
+  }
+
+  .result-area.visible { display: block; }
+
+  .result-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+
+  .result-title {
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-size: 18px;
+    color: var(--gold);
+  }
+
+  .result-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .result-btn {
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    color: var(--gold-dim);
+    padding: 8px 16px;
+    cursor: pointer;
+    border-radius: 4px;
+    font-family: "DM Sans", sans-serif;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    transition: all 0.2s;
+  }
+
+  .result-btn:hover {
+    background: #3d2a10;
+    border-color: var(--gold-dark);
+    color: var(--gold);
+  }
+
+  .result-btn.primary {
+    background: linear-gradient(135deg, #2d1f0e 0%, #3a2810 100%);
+    border-color: var(--gold-dark);
+    color: var(--gold);
+  }
+
+  .result-btn.primary:hover {
+    border-color: var(--gold-dim);
+  }
+
+  .result-frame-wrap {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    background: #fff;
+  }
+
+  .result-frame-wrap iframe {
+    width: 100%;
+    height: 600px;
+    border: none;
+    display: block;
+  }
+
+  /* --- Footer --- */
+  .footer {
+    text-align: center;
+    padding: 48px 0 32px;
+    font-size: 11px;
+    color: var(--text-ghost);
+    letter-spacing: 1px;
+  }
+
+  /* --- Animations --- */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .header { animation: fadeUp 0.6s ease both; }
+  .divider { animation: fadeUp 0.6s ease 0.1s both; }
+  .upload-zone { animation: fadeUp 0.6s ease 0.2s both; }
+  .config-bar { animation: fadeUp 0.6s ease 0.3s both; }
+
+  @media (max-width: 480px) {
+    .header { padding: 48px 0 32px; }
+    .upload-zone { padding: 40px 20px; }
+    .config-bar { flex-direction: column; align-items: stretch; }
+    .config-bar label { margin-bottom: 4px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <header class="header">
+    <div class="header-eyebrow">Reference Guide Generator</div>
+    <h1>Book Analyzer</h1>
+    <p>Upload an EPUB and receive a beautifully crafted reference guide with chapter summaries, flashcards, and theoretical frameworks.</p>
+  </header>
+
+  <div class="divider"></div>
+
+  <!-- Upload -->
+  <div class="upload-zone" id="dropZone">
+    <div class="upload-icon">
+      <svg viewBox="0 0 48 48"><path d="M24 32V16m0 0l-7 7m7-7l7 7" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 34v4a4 4 0 004 4h24a4 4 0 004-4v-4" stroke-linecap="round"/></svg>
+    </div>
+    <div class="upload-label">Drop your EPUB here</div>
+    <div class="upload-hint">or <span>browse</span> to choose a file</div>
+    <input type="file" id="fileInput" accept=".epub">
+  </div>
+
+  <div class="config-bar">
+    <label for="webhookUrl">Webhook</label>
+    <input type="text" id="webhookUrl" placeholder="https://your-n8n.example.com/webhook/analyze-book" />
+  </div>
+
+  <!-- File Info -->
+  <div class="file-info" id="fileInfo">
+    <div class="file-info-icon">EPUB</div>
+    <div class="file-info-meta">
+      <div class="file-info-name" id="fileName"></div>
+      <div class="file-info-size" id="fileSize"></div>
+    </div>
+    <button class="file-info-remove" id="removeFile" title="Remove file">&times;</button>
+  </div>
+
+  <!-- Analyze -->
+  <button class="analyze-btn" id="analyzeBtn">Generate Reference Guide</button>
+
+  <!-- Error -->
+  <div class="error-box" id="errorBox"></div>
+
+  <!-- Progress -->
+  <div class="progress-area" id="progressArea">
+    <div class="progress-title">Analyzing your book&hellip;</div>
+    <div class="progress-steps">
+      <div class="step" id="step-extract">
+        <div class="step-dot"></div>
+        <span class="step-label">Extracting chapters from EPUB</span>
+        <div class="step-spinner"></div>
+      </div>
+      <div class="step" id="step-upload">
+        <div class="step-dot"></div>
+        <span class="step-label">Uploading to analysis pipeline</span>
+        <div class="step-spinner"></div>
+      </div>
+      <div class="step" id="step-analyze">
+        <div class="step-dot"></div>
+        <span class="step-label">AI analyzing each chapter</span>
+        <div class="step-spinner"></div>
+      </div>
+      <div class="step" id="step-synthesize">
+        <div class="step-dot"></div>
+        <span class="step-label">Cross-book synthesis</span>
+        <div class="step-spinner"></div>
+      </div>
+      <div class="step" id="step-assemble">
+        <div class="step-dot"></div>
+        <span class="step-label">Assembling reference guide</span>
+        <div class="step-spinner"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Result -->
+  <div class="result-area" id="resultArea">
+    <div class="result-header">
+      <div class="result-title">Your Reference Guide</div>
+      <div class="result-actions">
+        <button class="result-btn" id="newBtn">New Upload</button>
+        <button class="result-btn primary" id="downloadBtn">Download HTML</button>
+      </div>
+    </div>
+    <div class="result-frame-wrap">
+      <iframe id="resultFrame" sandbox="allow-scripts"></iframe>
+    </div>
+  </div>
+
+  <div class="footer">Powered by n8n &amp; OpenAI</div>
+</div>
+
+<script>
+(function() {
+  const dropZone = document.getElementById('dropZone');
+  const fileInput = document.getElementById('fileInput');
+  const fileInfo = document.getElementById('fileInfo');
+  const fileName = document.getElementById('fileName');
+  const fileSize = document.getElementById('fileSize');
+  const removeFile = document.getElementById('removeFile');
+  const analyzeBtn = document.getElementById('analyzeBtn');
+  const progressArea = document.getElementById('progressArea');
+  const errorBox = document.getElementById('errorBox');
+  const resultArea = document.getElementById('resultArea');
+  const resultFrame = document.getElementById('resultFrame');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const newBtn = document.getElementById('newBtn');
+  const webhookUrl = document.getElementById('webhookUrl');
+
+  let selectedFile = null;
+  let resultHtml = null;
+
+  // Load saved webhook URL
+  const saved = localStorage.getItem('bookanalyzer_webhook');
+  if (saved) webhookUrl.value = saved;
+
+  // --- Drop zone ---
+  dropZone.addEventListener('click', () => fileInput.click());
+
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('dragover');
+  });
+
+  dropZone.addEventListener('dragleave', () => {
+    dropZone.classList.remove('dragover');
+  });
+
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file) selectFile(file);
+  });
+
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files[0]) selectFile(fileInput.files[0]);
+  });
+
+  removeFile.addEventListener('click', () => clearFile());
+
+  function selectFile(file) {
+    if (!file.name.toLowerCase().endsWith('.epub')) {
+      showError('Please select an EPUB file.');
+      return;
+    }
+    selectedFile = file;
+    fileName.textContent = file.name;
+    fileSize.textContent = formatBytes(file.size);
+    fileInfo.classList.add('visible');
+    analyzeBtn.classList.add('visible');
+    hideError();
+  }
+
+  function clearFile() {
+    selectedFile = null;
+    fileInput.value = '';
+    fileInfo.classList.remove('visible');
+    analyzeBtn.classList.remove('visible');
+  }
+
+  function formatBytes(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1048576).toFixed(1) + ' MB';
+  }
+
+  // --- Analyze ---
+  analyzeBtn.addEventListener('click', startAnalysis);
+
+  async function startAnalysis() {
+    if (!selectedFile) return;
+
+    const url = webhookUrl.value.trim();
+    if (!url) {
+      showError('Please enter your n8n webhook URL.');
+      return;
+    }
+
+    localStorage.setItem('bookanalyzer_webhook', url);
+
+    analyzeBtn.disabled = true;
+    hideError();
+    resultArea.classList.remove('visible');
+    progressArea.classList.add('visible');
+
+    resetSteps();
+    activateStep('extract');
+
+    try {
+      // Step 1: Extract EPUB (done server-side)
+      const formData = new FormData();
+      formData.append('epub', selectedFile);
+      formData.append('webhookUrl', url);
+
+      // Simulate extract step completing quickly, then move to upload
+      await delay(600);
+      completeStep('extract');
+      activateStep('upload');
+
+      // Step 2-5: Server handles everything
+      const response = await fetch('/api/analyze', {
+        method: 'POST',
+        body: formData,
+      });
+
+      completeStep('upload');
+      activateStep('analyze');
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(errText || `Server error: ${response.status}`);
+      }
+
+      // The server returns the HTML directly
+      // We simulate the remaining steps for UX
+      await delay(500);
+      completeStep('analyze');
+      activateStep('synthesize');
+      await delay(400);
+      completeStep('synthesize');
+      activateStep('assemble');
+      await delay(300);
+      completeStep('assemble');
+
+      resultHtml = await response.text();
+      showResult(resultHtml);
+
+    } catch (err) {
+      showError(err.message || 'Something went wrong. Please try again.');
+      progressArea.classList.remove('visible');
+    } finally {
+      analyzeBtn.disabled = false;
+    }
+  }
+
+  // --- Steps ---
+  function resetSteps() {
+    document.querySelectorAll('.step').forEach(s => {
+      s.classList.remove('active', 'done');
+    });
+  }
+
+  function activateStep(id) {
+    document.getElementById('step-' + id).classList.add('active');
+  }
+
+  function completeStep(id) {
+    const step = document.getElementById('step-' + id);
+    step.classList.remove('active');
+    step.classList.add('done');
+  }
+
+  // --- Error ---
+  function showError(msg) {
+    errorBox.textContent = msg;
+    errorBox.classList.add('visible');
+  }
+
+  function hideError() {
+    errorBox.classList.remove('visible');
+  }
+
+  // --- Result ---
+  function showResult(html) {
+    progressArea.classList.remove('visible');
+    resultArea.classList.add('visible');
+    resultFrame.srcdoc = html;
+  }
+
+  downloadBtn.addEventListener('click', () => {
+    if (!resultHtml) return;
+    const blob = new Blob([resultHtml], { type: 'text/html' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = (selectedFile ? selectedFile.name.replace(/\.epub$/i, '') : 'book') + '-reference-guide.html';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  newBtn.addEventListener('click', () => {
+    resultArea.classList.remove('visible');
+    progressArea.classList.remove('visible');
+    clearFile();
+    resultHtml = null;
+  });
+
+  function delay(ms) {
+    return new Promise(r => setTimeout(r, ms));
+  }
+})();
+</script>
+</body>
+</html>
