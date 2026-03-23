@@ -49,6 +49,23 @@ function parseChapter(buffer, filename, chapterNumber) {
   };
 }
 
+// --- Networking ---
+
+/**
+ * Rewrite localhost URLs so they resolve from inside the Docker container.
+ * The user enters "http://localhost:5678/..." in the browser (which runs on
+ * the host), but the fetch happens inside the container where "localhost"
+ * points to the container itself.  `host.docker.internal` is the Docker-
+ * provided alias that reaches the host machine.
+ */
+function resolveWebhookUrl(url) {
+  const DOCKER_HOST = process.env.DOCKER_HOST_ALIAS || 'host.docker.internal';
+  return url.replace(
+    /^(https?:\/\/)(localhost|127\.0\.0\.1)(:\d+)/i,
+    `$1${DOCKER_HOST}$3`,
+  );
+}
+
 // --- Server ---
 
 app.use(express.static(path.join(__dirname, '..', 'frontend')));
@@ -95,10 +112,11 @@ app.post('/api/analyze', upload.single('epub'), async (req, res) => {
       return res.status(400).json({ error: 'No chapters with enough content found in the EPUB.' });
     }
 
-    console.log(`Extracted ${chapters.length} chapters from "${file.originalname}", sending to n8n: ${webhookUrl}`);
+    const targetUrl = resolveWebhookUrl(webhookUrl);
+    console.log(`Extracted ${chapters.length} chapters from "${file.originalname}", sending to n8n: ${targetUrl}`);
 
     // 3. Send pre-parsed chapters as JSON to n8n (uses the workflow's JSON fallback path)
-    const n8nResponse = await fetch(webhookUrl, {
+    const n8nResponse = await fetch(targetUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chapters }),
