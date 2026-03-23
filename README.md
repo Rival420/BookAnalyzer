@@ -12,16 +12,15 @@ The application sits between you and an **n8n workflow** that does the heavy lif
 ┌──────────────┐      ┌──────────────┐      ┌──────────────┐      ┌──────────────┐
 │              │      │              │      │              │      │              │
 │  You upload  │─────▶│  Backend     │─────▶│  n8n         │─────▶│  HTML        │
-│  an EPUB     │      │  extracts    │      │  workflow    │      │  Reference   │
-│              │      │  XHTML files │      │  analyzes    │      │  Guide       │
-│              │      │  from ZIP    │      │  via OpenAI  │      │              │
+│  an EPUB     │      │  extracts &  │      │  workflow    │      │  Reference   │
+│              │      │  parses text │      │  analyzes    │      │  Guide       │
+│              │      │  from EPUB   │      │  via OpenAI  │      │              │
 └──────────────┘      └──────────────┘      └──────────────┘      └──────────────┘
 ```
 
 1. **EPUB Upload** — You drag-and-drop (or browse) an `.epub` file into the web interface.
-2. **Chapter Extraction** — The backend unpacks the EPUB (which is just a ZIP archive) and pulls out all `.xhtml` / `.html` chapter files.
-3. **n8n Analysis Pipeline** — Those chapter files are forwarded as a multipart POST to your n8n webhook, which:
-   - Strips HTML tags and extracts plain text per chapter
+2. **Chapter Extraction & Parsing** — The backend unpacks the EPUB (which is just a ZIP archive), pulls out all `.xhtml` / `.html` chapter files, strips HTML tags, extracts chapter titles, and filters out short non-chapter files (cover pages, nav, etc.).
+3. **n8n Analysis Pipeline** — The parsed chapters are sent as a JSON payload to your n8n webhook, which:
    - Sends each chapter to OpenAI for individual summarization (key points, themes, analytical summary)
    - Aggregates all chapter results
    - Runs a second AI pass for cross-book synthesis (flashcards, takeaways, argument chain, theoretical frameworks, metadata)
@@ -97,8 +96,8 @@ BookAnalyzer/
 ├── .dockerignore
 ├── backend/
 │   ├── Dockerfile              # Node 20 Alpine image
-│   ├── package.json            # Express, JSZip, multer, form-data, node-fetch
-│   └── server.js               # EPUB extraction + n8n webhook proxy
+│   ├── package.json            # Express, JSZip, multer, node-fetch
+│   └── server.js               # EPUB extraction, text parsing + n8n webhook proxy
 └── frontend/
     └── index.html              # Self-contained SPA (HTML + CSS + JS)
 ```
@@ -108,9 +107,9 @@ BookAnalyzer/
 A lightweight Express server with two responsibilities:
 
 - **Serve the frontend** — static files from `frontend/`
-- **`POST /api/analyze`** — accepts the EPUB upload, extracts chapter files, and proxies them to the n8n webhook. Returns the HTML response from n8n directly to the browser.
+- **`POST /api/analyze`** — accepts the EPUB upload, extracts and parses chapters (HTML stripping, title extraction, short-file filtering), and sends the structured JSON to the n8n webhook. Returns the HTML response from n8n directly to the browser.
 
-The server runs in-memory (no disk writes) and supports EPUBs up to 100 MB.
+The server runs in-memory (no disk writes) and supports EPUBs up to 100 MB. It automatically rewrites `localhost` webhook URLs to `host.docker.internal` so you don't need to think about Docker networking.
 
 ### Frontend (`index.html`)
 
@@ -129,6 +128,7 @@ Features:
 |---|---|---|
 | `PORT` | `3000` | Internal port the Node server listens on |
 | `NODE_ENV` | `production` | Node environment |
+| `DOCKER_HOST_ALIAS` | `host.docker.internal` | Hostname used to reach the host machine from inside the container |
 
 The Docker Compose file maps internal port 3000 to host port **3080**. Change this in `docker-compose.yml` if needed:
 
@@ -139,11 +139,12 @@ ports:
 
 ## Networking Notes
 
-The webhook URL you enter in the browser is called **from the Docker container**, not from your browser. This matters when n8n runs locally:
+The webhook URL you enter in the browser is called **from the Docker container**, not from your browser. The backend **automatically rewrites** `localhost` and `127.0.0.1` URLs to `host.docker.internal`, so you can just enter `http://localhost:5678/webhook/analyze-book` and it will work out of the box.
 
-- If n8n runs on the same machine via Docker, use `http://host.docker.internal:5678/webhook/analyze-book` (macOS/Windows) or the Docker bridge IP on Linux.
-- If n8n runs on a remote server, use its public URL.
+For other setups:
+- If n8n runs on a remote server, use its public URL as-is.
 - If n8n runs on the same Docker network, you can use the container name as hostname.
+- To override the host alias, set `DOCKER_HOST_ALIAS` in the environment.
 
 ## Troubleshooting
 
@@ -153,7 +154,7 @@ The webhook URL you enter in the browser is called **from the Docker container**
 | **Timeout / no response** | Large books with many chapters can take 5-10 minutes. The timeout is set to 10 minutes. Check n8n execution logs for errors. |
 | **"n8n webhook returned 404"** | Make sure the workflow is **activated** in n8n, and the webhook path matches (`/webhook/analyze-book`). |
 | **"n8n webhook returned 502"** | n8n likely hit an error during processing. Check the n8n execution history for details (often an OpenAI rate limit or timeout). |
-| **Container can't reach n8n** | See the [Networking Notes](#networking-notes) section above. |
+| **Container can't reach n8n** | `localhost` URLs are auto-rewritten to `host.docker.internal`. If n8n is on a different host or custom Docker network, see [Networking Notes](#networking-notes). |
 
 ## Stopping the App
 
