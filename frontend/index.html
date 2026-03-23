@@ -735,8 +735,15 @@
       activateStep('analyze');
 
       if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(errText || `Server error: ${response.status}`);
+        const contentType = response.headers.get('content-type') || '';
+        let msg;
+        if (contentType.includes('application/json')) {
+          const errJson = await response.json();
+          msg = errJson.detail ? `${errJson.error} — ${errJson.detail}` : errJson.error;
+        } else {
+          msg = await response.text();
+        }
+        throw new Error(msg || `Server error: ${response.status}`);
       }
 
       // The server returns the HTML directly
