@@ -1,0 +1,4 @@
+# Contains the n8n API key — do not commit
+.cursor/mcp.json
+
+node_modules/

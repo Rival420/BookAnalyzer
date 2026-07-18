@@ -228,19 +228,24 @@
     color: var(--text-ghost);
   }
 
-  /* --- File info --- */
+  /* --- File list --- */
+  .file-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .file-list:not(:empty) { margin-top: 20px; }
+
   .file-info {
-    display: none;
+    display: flex;
     align-items: center;
     gap: 12px;
-    margin-top: 20px;
     padding: 14px 16px;
     background: rgba(139, 105, 20, 0.06);
     border: 1px solid var(--border);
     border-radius: 6px;
   }
-
-  .file-info.visible { display: flex; }
 
   .file-info-icon {
     width: 36px;
@@ -532,7 +537,7 @@
   <header class="header">
     <div class="header-eyebrow">Reference Guide Generator</div>
     <h1>Book Analyzer</h1>
-    <p>Upload an EPUB and receive a beautifully crafted reference guide with chapter summaries, flashcards, and theoretical frameworks.</p>
+    <p>Upload an EPUB or PDF — or several papers on the same topic — and receive a beautifully crafted reference guide with chapter summaries, flashcards, and theoretical frameworks.</p>
   </header>
 
   <div class="divider"></div>
@@ -542,9 +547,9 @@
     <div class="upload-icon">
       <svg viewBox="0 0 48 48"><path d="M24 32V16m0 0l-7 7m7-7l7 7" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 34v4a4 4 0 004 4h24a4 4 0 004-4v-4" stroke-linecap="round"/></svg>
     </div>
-    <div class="upload-label">Drop your EPUB here</div>
-    <div class="upload-hint">or <span>browse</span> to choose a file</div>
-    <input type="file" id="fileInput" accept=".epub">
+    <div class="upload-label">Drop your EPUB or PDF files here</div>
+    <div class="upload-hint">or <span>browse</span> to choose files &mdash; add multiple papers for a combined guide</div>
+    <input type="file" id="fileInput" accept=".epub,.pdf" multiple>
   </div>
 
   <div class="config-bar">
@@ -552,15 +557,8 @@
     <input type="text" id="webhookUrl" placeholder="https://your-n8n.example.com/webhook/analyze-book" />
   </div>
 
-  <!-- File Info -->
-  <div class="file-info" id="fileInfo">
-    <div class="file-info-icon">EPUB</div>
-    <div class="file-info-meta">
-      <div class="file-info-name" id="fileName"></div>
-      <div class="file-info-size" id="fileSize"></div>
-    </div>
-    <button class="file-info-remove" id="removeFile" title="Remove file">&times;</button>
-  </div>
+  <!-- Selected files -->
+  <div class="file-list" id="fileList"></div>
 
   <!-- Analyze -->
   <button class="analyze-btn" id="analyzeBtn">Generate Reference Guide</button>
@@ -574,7 +572,7 @@
     <div class="progress-steps">
       <div class="step" id="step-extract">
         <div class="step-dot"></div>
-        <span class="step-label">Extracting chapters from EPUB</span>
+        <span class="step-label">Extracting chapters from book</span>
         <div class="step-spinner"></div>
       </div>
       <div class="step" id="step-upload">
@@ -621,10 +619,7 @@
 (function() {
   const dropZone = document.getElementById('dropZone');
   const fileInput = document.getElementById('fileInput');
-  const fileInfo = document.getElementById('fileInfo');
-  const fileName = document.getElementById('fileName');
-  const fileSize = document.getElementById('fileSize');
-  const removeFile = document.getElementById('removeFile');
+  const fileList = document.getElementById('fileList');
   const analyzeBtn = document.getElementById('analyzeBtn');
   const progressArea = document.getElementById('progressArea');
   const errorBox = document.getElementById('errorBox');
@@ -634,7 +629,7 @@
   const newBtn = document.getElementById('newBtn');
   const webhookUrl = document.getElementById('webhookUrl');
 
-  let selectedFile = null;
+  let selectedFiles = [];
   let resultHtml = null;
 
   // Load saved webhook URL
@@ -656,34 +651,78 @@
   dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dropZone.classList.remove('dragover');
-    const file = e.dataTransfer.files[0];
-    if (file) selectFile(file);
+    addFiles(e.dataTransfer.files);
   });
 
   fileInput.addEventListener('change', () => {
-    if (fileInput.files[0]) selectFile(fileInput.files[0]);
+    addFiles(fileInput.files);
+    fileInput.value = ''; // allow re-selecting the same file later
   });
 
-  removeFile.addEventListener('click', () => clearFile());
-
-  function selectFile(file) {
-    if (!file.name.toLowerCase().endsWith('.epub')) {
-      showError('Please select an EPUB file.');
-      return;
+  function addFiles(list) {
+    const rejected = [];
+    for (const file of list) {
+      const name = file.name.toLowerCase();
+      if (!name.endsWith('.epub') && !name.endsWith('.pdf')) {
+        rejected.push(file.name);
+        continue;
+      }
+      const duplicate = selectedFiles.some((f) => f.name === file.name && f.size === file.size);
+      if (!duplicate) selectedFiles.push(file);
     }
-    selectedFile = file;
-    fileName.textContent = file.name;
-    fileSize.textContent = formatBytes(file.size);
-    fileInfo.classList.add('visible');
-    analyzeBtn.classList.add('visible');
-    hideError();
+    if (rejected.length > 0) {
+      showError('Skipped unsupported file(s): ' + rejected.join(', ') + '. Only EPUB and PDF are supported.');
+    } else {
+      hideError();
+    }
+    renderFileList();
   }
 
-  function clearFile() {
-    selectedFile = null;
+  function removeFileAt(index) {
+    selectedFiles.splice(index, 1);
+    renderFileList();
+  }
+
+  function clearFiles() {
+    selectedFiles = [];
     fileInput.value = '';
-    fileInfo.classList.remove('visible');
-    analyzeBtn.classList.remove('visible');
+    renderFileList();
+  }
+
+  function renderFileList() {
+    fileList.innerHTML = '';
+    selectedFiles.forEach((file, index) => {
+      const row = document.createElement('div');
+      row.className = 'file-info';
+
+      const icon = document.createElement('div');
+      icon.className = 'file-info-icon';
+      icon.textContent = file.name.toLowerCase().endsWith('.pdf') ? 'PDF' : 'EPUB';
+
+      const meta = document.createElement('div');
+      meta.className = 'file-info-meta';
+      const nameEl = document.createElement('div');
+      nameEl.className = 'file-info-name';
+      nameEl.textContent = file.name;
+      const sizeEl = document.createElement('div');
+      sizeEl.className = 'file-info-size';
+      sizeEl.textContent = formatBytes(file.size);
+      meta.append(nameEl, sizeEl);
+
+      const remove = document.createElement('button');
+      remove.className = 'file-info-remove';
+      remove.title = 'Remove file';
+      remove.innerHTML = '&times;';
+      remove.addEventListener('click', () => removeFileAt(index));
+
+      row.append(icon, meta, remove);
+      fileList.appendChild(row);
+    });
+
+    analyzeBtn.classList.toggle('visible', selectedFiles.length > 0);
+    analyzeBtn.textContent = selectedFiles.length > 1
+      ? `Generate Combined Guide (${selectedFiles.length} files)`
+      : 'Generate Reference Guide';
   }
 
   function formatBytes(bytes) {
@@ -696,7 +735,7 @@
   analyzeBtn.addEventListener('click', startAnalysis);
 
   async function startAnalysis() {
-    if (!selectedFile) return;
+    if (selectedFiles.length === 0) return;
 
     const url = webhookUrl.value.trim();
     if (!url) {
@@ -715,9 +754,9 @@
     activateStep('extract');
 
     try {
-      // Step 1: Extract EPUB (done server-side)
+      // Step 1: Extract files (done server-side)
       const formData = new FormData();
-      formData.append('epub', selectedFile);
+      selectedFiles.forEach((file) => formData.append('files', file));
       formData.append('webhookUrl', url);
 
       // Simulate extract step completing quickly, then move to upload
@@ -807,7 +846,10 @@
     const blob = new Blob([resultHtml], { type: 'text/html' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = (selectedFile ? selectedFile.name.replace(/\.epub$/i, '') : 'book') + '-reference-guide.html';
+    const base = selectedFiles.length === 1
+      ? selectedFiles[0].name.replace(/\.(epub|pdf)$/i, '')
+      : 'combined';
+    a.download = base + '-reference-guide.html';
     a.click();
     URL.revokeObjectURL(a.href);
   });
@@ -815,7 +857,7 @@
   newBtn.addEventListener('click', () => {
     resultArea.classList.remove('visible');
     progressArea.classList.remove('visible');
-    clearFile();
+    clearFiles();
     resultHtml = null;
   });
 

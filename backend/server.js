@@ -1,6 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const JSZip = require('jszip');
+const pdfParse = require('pdf-parse');
 const fetch = require('node-fetch');
 const path = require('path');
 
@@ -49,6 +50,124 @@ function parseChapter(buffer, filename, chapterNumber) {
   };
 }
 
+// --- Format-specific extraction ---
+
+/** Unzip an EPUB buffer and parse its XHTML/HTML files into chapters */
+async function extractEpubChapters(buffer) {
+  const zip = await JSZip.loadAsync(buffer);
+  const entries = [];
+
+  for (const [filepath, zipEntry] of Object.entries(zip.files)) {
+    if (zipEntry.dir) continue;
+    if (!/\.(xhtml|html|htm)$/i.test(filepath)) continue;
+
+    const fileBuffer = await zipEntry.async('nodebuffer');
+    entries.push({ filename: path.basename(filepath), buffer: fileBuffer });
+  }
+
+  if (entries.length === 0) {
+    throw Object.assign(new Error('No XHTML/HTML files found in the EPUB.'), { status: 400 });
+  }
+
+  // Sort for consistent chapter ordering, then extract text
+  entries.sort((a, b) => a.filename.localeCompare(b.filename, undefined, { numeric: true }));
+
+  let chapterNum = 0;
+  const chapters = entries
+    .map((entry) => parseChapter(entry.buffer, entry.filename, ++chapterNum))
+    .filter(Boolean);
+
+  return { chapters, sourceTitle: null };
+}
+
+/** Lines that look like chapter headings in extracted PDF text */
+const PDF_HEADING_RE = /^\s*((?:chapter|part|book|section)\s+(?:\d+|[IVXLC]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\b[^\n]{0,80}|\d{1,2}\.?\s+[A-Z][^\n]{3,80})\s*$/gim;
+
+/** Parse a PDF buffer into chapters, using heading detection with a chunking fallback */
+async function extractPdfChapters(buffer) {
+  const data = await pdfParse(buffer);
+  const fullText = (data.text || '').replace(/\r\n/g, '\n');
+
+  // Embedded document title, if the PDF has a meaningful one
+  const metaTitle = (data.info && typeof data.info.Title === 'string')
+    ? data.info.Title.replace(/\s+/g, ' ').trim()
+    : '';
+  const sourceTitle = metaTitle.length >= 8 ? metaTitle : null;
+
+  if (fullText.replace(/\s+/g, ' ').trim().length < 300) {
+    throw Object.assign(
+      new Error('No extractable text found in the PDF. It may be a scanned/image-only document.'),
+      { status: 400 },
+    );
+  }
+
+  // 1. Try to split on chapter-like headings.
+  // The regex is case-insensitive for word headings ("Chapter 3", "PART II").
+  // Numbered headings ("7. Evaluation") are re-checked case-sensitively and
+  // must look like a title, not prose or a footnote ("16 loops back to...",
+  // "1 Clearly, a"): capitalized first word and no sentence punctuation.
+  const headings = [...fullText.matchAll(PDF_HEADING_RE)].filter((m) => {
+    const h = m[1];
+    if (!/^\d/.test(h)) return true;
+    // Titles don't contain sentence punctuation, code, or trailing hyphenation
+    // (colons are allowed: "2. Overview: Example Tracing Run")
+    if (/[,;=()\[\]{}]|-$/.test(h)) return false;
+    // "7. Evaluation" (dot style), or "7 Evaluation Results" (no dot, >=2 words)
+    return /^\d{1,2}\.\s+[A-Z]/.test(h) || /^\d{1,2}\s+[A-Z]\S*\s+\S/.test(h);
+  });
+  let chapters = [];
+
+  if (headings.length >= 2) {
+    for (let i = 0; i < headings.length; i++) {
+      const start = headings[i].index;
+      const end = i + 1 < headings.length ? headings[i + 1].index : fullText.length;
+      const title = headings[i][1].replace(/\s+/g, ' ').trim();
+      const body = fullText.slice(start, end).replace(/\s+/g, ' ').trim();
+
+      if (body.length < 300) continue;
+      chapters.push({
+        chapterNumber: chapters.length + 1,
+        chapterTitle: title,
+        chapterText: body.substring(0, 15000),
+      });
+    }
+  }
+
+  // 2. Fallback: split into evenly-sized sections at paragraph boundaries
+  if (chapters.length < 2) {
+    chapters = chunkTextIntoSections(fullText);
+  }
+
+  return { chapters, sourceTitle };
+}
+
+/** Split plain text into ~12k-char sections, breaking at paragraph boundaries */
+function chunkTextIntoSections(fullText, chunkSize = 12000) {
+  const paragraphs = fullText.split(/\n\s*\n/);
+  const sections = [];
+  let current = '';
+
+  const flush = () => {
+    const text = current.replace(/\s+/g, ' ').trim();
+    if (text.length >= 300) {
+      sections.push({
+        chapterNumber: sections.length + 1,
+        chapterTitle: `Section ${sections.length + 1}`,
+        chapterText: text.substring(0, 15000),
+      });
+    }
+    current = '';
+  };
+
+  for (const para of paragraphs) {
+    if (current.length + para.length > chunkSize && current.length > 0) flush();
+    current += para + '\n\n';
+  }
+  flush();
+
+  return sections;
+}
+
 // --- Networking ---
 
 /**
@@ -72,48 +191,60 @@ app.use(express.static(path.join(__dirname, '..', 'frontend')));
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
-// Main endpoint: accept EPUB, extract + parse chapters, forward JSON to n8n
-app.post('/api/analyze', upload.single('epub'), async (req, res) => {
+// Main endpoint: accept one or more EPUB/PDF files, extract + merge chapters, forward JSON to n8n
+app.post('/api/analyze', upload.array('files', 20), async (req, res) => {
   try {
-    const { file } = req;
+    const files = req.files;
     const webhookUrl = req.body.webhookUrl;
 
-    if (!file) return res.status(400).json({ error: 'No EPUB file uploaded.' });
+    if (!files || files.length === 0) return res.status(400).json({ error: 'No files uploaded.' });
     if (!webhookUrl) return res.status(400).json({ error: 'No webhook URL provided.' });
 
-    // 1. Unzip the EPUB and collect XHTML/HTML entries
-    const zip = await JSZip.loadAsync(file.buffer);
-    const entries = [];
+    // 1. Extract chapters from each file
+    const multiSource = files.length > 1;
+    const chapters = [];
 
-    for (const [filepath, zipEntry] of Object.entries(zip.files)) {
-      if (zipEntry.dir) continue;
-      if (!/\.(xhtml|html|htm)$/i.test(filepath)) continue;
+    for (const file of files) {
+      const ext = (file.originalname.match(/\.(\w+)$/) || [])[1]?.toLowerCase();
+      let extracted;
 
-      const buffer = await zipEntry.async('nodebuffer');
-      entries.push({ filename: path.basename(filepath), buffer });
+      try {
+        if (ext === 'pdf') {
+          extracted = await extractPdfChapters(file.buffer);
+        } else if (ext === 'epub') {
+          extracted = await extractEpubChapters(file.buffer);
+        } else {
+          return res.status(400).json({
+            error: `Unsupported file type: "${file.originalname}". Please upload EPUB or PDF files.`,
+          });
+        }
+      } catch (err) {
+        err.message = `${file.originalname}: ${err.message}`;
+        throw err;
+      }
+
+      // When combining multiple papers, prefix each chapter with its source
+      // so the AI can attribute content and synthesize across papers.
+      if (multiSource) {
+        const source = extracted.sourceTitle || file.originalname.replace(/\.\w+$/, '');
+        extracted.chapters.forEach((ch) => {
+          ch.chapterTitle = `[${source}] ${ch.chapterTitle}`;
+        });
+      }
+
+      chapters.push(...extracted.chapters);
     }
 
-    if (entries.length === 0) {
-      return res.status(400).json({ error: 'No XHTML/HTML files found in the EPUB.' });
-    }
-
-    // 2. Sort for consistent chapter ordering, then extract text
-    entries.sort((a, b) => a.filename.localeCompare(b.filename, undefined, { numeric: true }));
-
-    let chapterNum = 0;
-    const chapters = entries
-      .map((entry) => parseChapter(entry.buffer, entry.filename, ++chapterNum))
-      .filter(Boolean);
-
-    // Re-number after filtering short entries
+    // 2. Re-number across all files
     chapters.forEach((ch, i) => { ch.chapterNumber = i + 1; });
 
     if (chapters.length === 0) {
-      return res.status(400).json({ error: 'No chapters with enough content found in the EPUB.' });
+      return res.status(400).json({ error: 'No chapters with enough content found in the uploaded files.' });
     }
 
     const targetUrl = resolveWebhookUrl(webhookUrl);
-    console.log(`Extracted ${chapters.length} chapters from "${file.originalname}", sending to n8n: ${targetUrl}`);
+    const fileNames = files.map((f) => `"${f.originalname}"`).join(', ');
+    console.log(`Extracted ${chapters.length} chapters from ${files.length} file(s) (${fileNames}), sending to n8n: ${targetUrl}`);
 
     // 3. Send pre-parsed chapters as JSON to n8n (uses the workflow's JSON fallback path)
     const n8nResponse = await fetch(targetUrl, {
@@ -139,7 +270,7 @@ app.post('/api/analyze', upload.single('epub'), async (req, res) => {
 
   } catch (err) {
     console.error('Error:', err);
-    res.status(500).json({ error: err.message || 'Internal server error' });
+    res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
   }
 });
 
